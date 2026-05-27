@@ -2,44 +2,22 @@
 # CAMERA INTRINSICS CONFIGURATION
 # ==============================================================================
 
-# -- ACTIVE CONFIGURATION: ZED Camera Profile (uncommented by default)
 cam_0:
   width: 960
   height: 600
-  fx: 361.542236328125
-  fy: 361.542236328125
-  cx: 485.6068115234375
-  cy: 311.95965576171875
+  fx: 643.5951111267952
+  fy: 642.665612685733
+  cx: 475.2215406900663
+  cy: 307.4120184196884
   distortion_model: "pinhole"
-  distortion_coefficients: []
+  distortion_coefficients: [-0.061606731291039, 0.100129900708930, 0.0, 0.0, 0.0]
 
 cam_1:
   width: 960
   height: 600
-  fx: 361.542236328125
-  fy: 361.542236328125
-  cx: 485.6068115234375
-  cy: 311.95965576171875
+  fx: 645.5637158104681
+  fy: 644.6523115974766
+  cx: 471.2755868675698
+  cy: 304.2698424873490
   distortion_model: "pinhole"
-  distortion_coefficients: []
-
-# -- TEMPLATE: Botanic Garden Camera Profile (Dalsa Gray Cameras)
-# cam_0:
-#   width: 960
-#   height: 600
-#   fx: 643.5951111267952
-#   fy: 642.665612685733
-#   cx: 475.2215406900663
-#   cy: 307.4120184196884
-#   distortion_model: "brown"
-#   distortion_coefficients: [-0.061606731291039, 0.10012990070893, 0.0, 0.0, 0.0]  # k1, k2, k3, p1, p2
-#
-# cam_1:
-#   width: 960
-#   height: 600
-#   fx: 645.5637158104681
-#   fy: 644.6523115974766
-#   cx: 471.2755868675698
-#   cy: 304.269842487349
-#   distortion_model: "brown"
-#   distortion_coefficients: [-0.060194715488128, 0.097872361377687, 0.0, 0.0, 0.0]
+  distortion_coefficients: [-0.060194715488128, 0.097872361377687, 0.0, 0.0, 0.0]

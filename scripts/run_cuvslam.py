@@ -613,8 +613,13 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
             p = cuvslam.Pose()
             if ext_key in transforms:
                 trans_cfg = transforms[ext_key]
-                p.translation = trans_cfg.get("translation", [0.0, 0.0, 0.0])
-                p.rotation = trans_cfg.get("rotation", [0.0, 0.0, 0.0, 1.0])
+                if isinstance(trans_cfg, list):
+                    mat = np.array(trans_cfg)
+                    p.translation = mat[:3, 3].tolist()
+                    p.rotation = mat_to_quat(mat[:3, :3]).tolist()
+                else:
+                    p.translation = trans_cfg.get("translation", [0.0, 0.0, 0.0])
+                    p.rotation = trans_cfg.get("rotation", [0.0, 0.0, 0.0, 1.0])
             else:
                 p.translation = [0.0, 0.0, 0.0]
                 p.rotation = [0.0, 0.0, 0.0, 1.0]
@@ -640,8 +645,13 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
             p_imu = cuvslam.Pose()
             if "rig_from_imu_0" in transforms:
                 t_cfg = transforms["rig_from_imu_0"]
-                p_imu.translation = t_cfg.get("translation", [0.0, 0.0, 0.0])
-                p_imu.rotation = t_cfg.get("rotation", [0.0, 0.0, 0.0, 1.0])
+                if isinstance(t_cfg, list):
+                    mat = np.array(t_cfg)
+                    p_imu.translation = mat[:3, 3].tolist()
+                    p_imu.rotation = mat_to_quat(mat[:3, :3]).tolist()
+                else:
+                    p_imu.translation = t_cfg.get("translation", [0.0, 0.0, 0.0])
+                    p_imu.rotation = t_cfg.get("rotation", [0.0, 0.0, 0.0, 1.0])
             imu.rig_from_imu = p_imu
 
             # Noise parameters
@@ -755,7 +765,6 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
 
         profile = pipeline.start(rs_config)
         playback = profile.get_device().as_playback()
-        playback.set_real_time(main_params.get("playback_real_time", True))
 
         print("[INFO] Starting RealSense Bag processing...")
         try:

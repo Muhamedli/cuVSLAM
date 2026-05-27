@@ -14,24 +14,10 @@ verbose: true
 # ------------------------------------------------------------------------------
 # Active Bag Path and Topic Configuration
 # ------------------------------------------------------------------------------
-
-# -- OPTION 1: ZED Stereo Dataset (ROS 2 / .db3)
-bag_path: "/mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/VO/2025_01_22-14_06_00-hall_VO_V1_0.db3"
+bag_path: "/mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/Botanic_garden/1018_00_VLIO.bag"
+gt_bag_path: /mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/Botanic_garden/gt_1018_00_qnew.bag
 use_realsense_bag: false
 
 topics:
-  left: "/zedx_45327000/zed_node/left/image_rect_color/compressed"
-  right: "/zedx_45327000/zed_node/right/image_rect_color/compressed"
-
-# -- OPTION 2: Botanic Garden Dataset (ROS 1 / .bag)
-# bag_path: "/mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/Botanic_garden/1018_00_VLIO.bag"
-# gt_bag_path: "/mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/Botanic_garden/gt_1018_00_qnew.bag"
-# use_realsense_bag: false
-# topics:
-#   left: "/dalsa_gray/left/image_raw"
-#   right: "/dalsa_gray/right/image_raw"
-
-# -- OPTION 3: RealSense D405 Dataset (.bag via pyrealsense2)
-# bag_path: "/mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/realsense_d405/NLK_4.bag"
-# use_realsense_bag: true
-# playback_real_time: true
+  left: /dalsa_gray/left/image_raw
+  right: /dalsa_gray/right/image_raw
