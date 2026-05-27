@@ -28,6 +28,13 @@ import sys
 import struct
 import bz2
 import argparse
+import yaml
+import cv2
+import rerun as rr
+import rerun.blueprint as rrb
+import numpy as np
+import cuvslam
+from scipy.spatial.transform import Rotation as R
 import queue
 import threading
 from typing import Dict, List, Optional, Tuple, Any
@@ -174,6 +181,38 @@ def parse_pose_stamped(data):
     except Exception:
         return None
 
+def parse_odometry(data):
+    """Parse nav_msgs/Odometry (ROS 1)."""
+    try:
+        off = 0
+        off += 4  # seq
+        sec, nsec = struct.unpack_from('<II', data, off); off += 8
+        _, off = parse_ros1_string(data, off)  # frame_id
+        _, off = parse_ros1_string(data, off)  # child_frame_id
+        px, py, pz = struct.unpack_from('<ddd', data, off); off += 24
+        ox, oy, oz, ow = struct.unpack_from('<dddd', data, off)
+        return sec * 1_000_000_000 + nsec, [px, py, pz], [ox, oy, oz, ow]
+    except Exception:
+        return None
+
+def parse_tf_message(data):
+    """Parse tf2_msgs/TFMessage (ROS 1). Returns list of (ts_ns, frame_id, child_frame_id, pos, quat)."""
+    try:
+        off = 0
+        arr_len = struct.unpack_from('<I', data, off)[0]; off += 4
+        transforms = []
+        for _ in range(arr_len):
+            off += 4  # seq
+            sec, nsec = struct.unpack_from('<II', data, off); off += 8
+            frame_id, off = parse_ros1_string(data, off)
+            child_frame_id, off = parse_ros1_string(data, off)
+            px, py, pz = struct.unpack_from('<ddd', data, off); off += 24
+            ox, oy, oz, ow = struct.unpack_from('<dddd', data, off); off += 32
+            transforms.append((sec * 1_000_000_000 + nsec, frame_id, child_frame_id, [px, py, pz], [ox, oy, oz, ow]))
+        return transforms
+    except Exception:
+        return None
+
 def read_bag_connections(path):
     """Read Connection records from index area of ROS 1 bag file."""
     conns = {}
@@ -200,9 +239,12 @@ def read_bag_connections(path):
             f.read(dl)
     return conns
 
-def iter_bag_stereo_ros1(bag_path, left_cids, right_cids, sync_tolerance_ns=10000000, max_buffer_size=30):
-    """Generator: yields synchronized stereo pairs (ts_ns, left_rgb, right_rgb)."""
+def iter_bag_stereo_ros1(bag_path, left_cids, right_cids, gt_cids=None, gt_frame_id=None, gt_child_frame_id=None, sync_tolerance_ns=10000000, max_buffer_size=30):
+    """Generator: yields synchronized stereo pairs ('stereo', ts_ns, left_rgb, right_rgb) and GT ('gt', ts_ns, pos)."""
     target_cids = left_cids | right_cids
+    if gt_cids:
+        target_cids |= gt_cids
+
     left_buf, right_buf = {}, {}
 
     with open(bag_path, 'rb') as f:
@@ -245,6 +287,25 @@ def iter_bag_stereo_ros1(bag_path, left_cids, right_cids, sync_tolerance_ns=1000
                 if rop != 2 or 'conn' not in rf: continue
                 cid = struct.unpack('<I', rf['conn'])[0]
                 if cid not in target_cids: continue
+
+                if gt_cids and cid in gt_cids:
+                    res = parse_pose_stamped(rd)
+                    if res is None:
+                        res = parse_odometry(rd)
+                    if res is not None:
+                        ts_ns, pos, quat = res
+                        yield 'gt', ts_ns, pos, quat
+                    else:
+                        tfs = parse_tf_message(rd)
+                        if tfs is not None and gt_frame_id and gt_child_frame_id:
+                            for ts_ns, fid, cfid, pos, quat in tfs:
+                                fid = fid.lstrip('/')
+                                cfid = cfid.lstrip('/')
+                                gt_fid = gt_frame_id.lstrip('/')
+                                gt_cfid = gt_child_frame_id.lstrip('/')
+                                if fid == gt_fid and cfid == gt_cfid:
+                                    yield 'gt', ts_ns, pos, quat
+                    continue
 
                 result = try_parse_image(rd)
                 if result is None: continue
@@ -296,10 +357,14 @@ def iter_bag_stereo_ros1(bag_path, left_cids, right_cids, sync_tolerance_ns=1000
                 else:
                     r = right_buf.pop(ts_ns); l = left_buf.pop(best_ts)
 
-                yield min(ts_ns, best_ts), l, r
+                yield 'stereo', min(ts_ns, best_ts), l, r
 
-def iter_bag_mono(bag_path, left_cids):
-    """Generator: yields monocular frames (ts_ns, img) from ROS 1 bag."""
+def iter_bag_mono(bag_path, left_cids, gt_cids=None, gt_frame_id=None, gt_child_frame_id=None):
+    """Generator: yields monocular frames ('mono', ts_ns, img) and GT ('gt', ts_ns, pos) from ROS 1 bag."""
+    target_cids = set(left_cids)
+    if gt_cids:
+        target_cids |= gt_cids
+
     with open(bag_path, 'rb') as f:
         f.readline()
         while True:
@@ -338,7 +403,26 @@ def iter_bag_mono(bag_path, left_cids):
                 rop = struct.unpack('<B', rf.get('op', b'\x00'))[0]
                 if rop != 2 or 'conn' not in rf: continue
                 cid = struct.unpack('<I', rf['conn'])[0]
-                if cid not in left_cids: continue
+                if cid not in target_cids: continue
+
+                if gt_cids and cid in gt_cids:
+                    res = parse_pose_stamped(rd)
+                    if res is None:
+                        res = parse_odometry(rd)
+                    if res is not None:
+                        ts_ns, pos, quat = res
+                        yield 'gt', ts_ns, pos, quat
+                    else:
+                        tfs = parse_tf_message(rd)
+                        if tfs is not None and gt_frame_id and gt_child_frame_id:
+                            for ts_ns, fid, cfid, pos, quat in tfs:
+                                fid = fid.lstrip('/')
+                                cfid = cfid.lstrip('/')
+                                gt_fid = gt_frame_id.lstrip('/')
+                                gt_cfid = gt_child_frame_id.lstrip('/')
+                                if fid == gt_fid and cfid == gt_cfid:
+                                    yield 'gt', ts_ns, pos, quat
+                    continue
 
                 result = try_parse_image(rd)
                 if result is None: continue
@@ -355,13 +439,22 @@ def iter_bag_mono(bag_path, left_cids):
                 else:
                     continue
 
-                yield ts_ns, img
+                yield 'mono', ts_ns, img
 
-def load_gt_trajectory(gt_bag_path):
-    """Loads GT trajectory from ROS 1 bag (PoseStamped)."""
+def load_gt_trajectory(gt_bag_path, gt_topic=None, gt_frame_id=None, gt_child_frame_id=None):
+    """Loads GT trajectory from ROS 1 bag (PoseStamped, Odometry, or TF)."""
     if not os.path.exists(gt_bag_path):
         print(f"[WARN] GT bag not found: {gt_bag_path}")
         return []
+
+    conns = read_bag_connections(gt_bag_path)
+    if gt_topic:
+        gt_cids = {cid for cid, t in conns.items() if t == gt_topic}
+        if not gt_cids:
+            print(f"[WARN] GT topic {gt_topic} not found in {gt_bag_path}")
+            return []
+    else:
+        gt_cids = set(conns.keys())
 
     gt_points = []
     with open(gt_bag_path, 'rb') as f:
@@ -400,12 +493,29 @@ def load_gt_trajectory(gt_bag_path):
 
                 rf = read_header_fields(rh)
                 rop = struct.unpack('<B', rf.get('op', b'\x00'))[0]
-                if rop != 2: continue
+                if rop != 2 or 'conn' not in rf: continue
+
+                cid = struct.unpack('<I', rf['conn'])[0]
+                if cid not in gt_cids: continue
 
                 res = parse_pose_stamped(rd)
+                if res is None:
+                    res = parse_odometry(rd)
                 if res is not None:
                     ts_ns, pos, _ = res
                     gt_points.append((ts_ns, np.array(pos)))
+                else:
+                    tfs = parse_tf_message(rd)
+                    if tfs is not None and gt_frame_id and gt_child_frame_id:
+                        for ts_ns, fid, cfid, pos, quat in tfs:
+                            # Normalize leading slashes
+                            fid = fid.lstrip('/')
+                            cfid = cfid.lstrip('/')
+                            gt_fid = gt_frame_id.lstrip('/')
+                            gt_cfid = gt_child_frame_id.lstrip('/')
+
+                            if fid == gt_fid and cfid == gt_cfid:
+                                gt_points.append((ts_ns, np.array(pos)))
 
     print(f"[INFO] Loaded {len(gt_points)} GT points")
     return gt_points
@@ -664,6 +774,8 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
             rig.imus = [imu]
 
     # Initialize cuVSLAM configurations
+    odom_hp = main_params
+
     odom_cfg = cuvslam.Tracker.OdometryConfig(
         async_sba=(odom_mode == cuvslam.Tracker.OdometryMode.Multicamera and use_realsense_bag),
         enable_observations_export=True,
@@ -671,13 +783,29 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
         odometry_mode=odom_mode
     )
 
+    if "use_denoising" in odom_hp:
+        odom_cfg.use_denoising = odom_hp["use_denoising"]
+    if "use_motion_model" in odom_hp:
+        odom_cfg.use_motion_model = odom_hp["use_motion_model"]
+    if "max_frame_delta_s" in odom_hp:
+        odom_cfg.max_frame_delta_s = odom_hp["max_frame_delta_s"]
+
     slam_cfg = None
     if use_slam:
+        slam_hp = main_params
         slam_cfg = cuvslam.Tracker.SlamConfig(
             sync_mode=use_realsense_bag, # Sync mode for realsense, async for ROS bags
             enable_reading_internals=use_realsense_bag,
-            max_map_size=0
+            max_map_size=slam_hp.get("max_map_size", 0)
         )
+        if "use_gpu" in slam_hp:
+            slam_cfg.use_gpu = slam_hp["use_gpu"]
+        if "map_cell_size" in slam_hp:
+            slam_cfg.map_cell_size = slam_hp["map_cell_size"]
+        if "max_landmarks_distance" in slam_hp:
+            slam_cfg.max_landmarks_distance = slam_hp["max_landmarks_distance"]
+        if "planar_constraints" in slam_hp:
+            slam_cfg.planar_constraints = slam_hp["planar_constraints"]
 
     # Create VSLAM Tracker
     tracker = cuvslam.Tracker(rig, odom_cfg, slam_cfg)
@@ -692,10 +820,10 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
         # Configure panels and layouts
         views = []
         if odom_mode == cuvslam.Tracker.OdometryMode.Mono:
-            views.append(rrb.Spatial2DView(origin='world/camera/left', name='Left Camera'))
+            views.append(rrb.Spatial2DView(origin='world/cuvslam/camera/left', name='Left Camera'))
         else:
-            views.append(rrb.Spatial2DView(origin='world/camera/left', name='Left Camera'))
-            views.append(rrb.Spatial2DView(origin='world/camera/right', name='Right Camera'))
+            views.append(rrb.Spatial2DView(origin='world/cuvslam/camera/left', name='Left Camera'))
+            views.append(rrb.Spatial2DView(origin='world/cuvslam/camera/right', name='Right Camera'))
 
         rr.send_blueprint(rrb.Blueprint(
             rrb.TimePanel(state="collapsed"),
@@ -707,7 +835,18 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
                 )
             ]),
         ), make_active=True)
-        rr.log("/", rr.ViewCoordinates.RIGHT_HAND_Y_DOWN, static=True)
+        # Set world to FLU (X forward, Y left, Z up)
+        rr.log("world", rr.ViewCoordinates.FLU, static=True)
+        # Draw a static triad at the world origin so it's easy to orient
+        rr.log("world/origin",
+               rr.Arrows3D(
+                   vectors=[[1,0,0], [0,1,0], [0,0,1]],
+                   origins=[[0,0,0], [0,0,0], [0,0,0]],
+                   colors=[[255,0,0], [0,255,0], [0,0,255]],
+                   radii=0.01
+               ), static=True)
+        # Set cuvslam local frame to RDF (Optical: X right, Y down, Z forward)
+        rr.log("world/cuvslam", rr.ViewCoordinates.RDF, static=True)
 
     # --------------------------------------------------------------------------
     # Bag playback and tracking loop
@@ -737,13 +876,39 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
 
     # Load Ground Truth trajectory if specified
     gt_bag_path = main_params.get("gt_bag_path")
-    if gt_bag_path and verbose:
-        gt_data = load_gt_trajectory(gt_bag_path)
-        if gt_data:
-            gt_pts = np.array([p for _, p in gt_data])
-            # Align first point to origin
-            gt_pts -= gt_pts[0]
-            rr.log('trajectory_gt', rr.LineStrips3D([gt_pts.tolist()], colors=[[0, 200, 0]]), static=True)
+    topics_cfg = main_params.get("topics", {})
+    gt_topic = topics_cfg.get("gt")
+    gt_frame_id = topics_cfg.get("gt_frame_id")
+    gt_child_frame_id = topics_cfg.get("gt_child_frame_id")
+
+    # We will accumulate GT points here during playback if parsing on the fly
+    trajectory_gt_pts = []
+    first_gt_point = None
+    first_T_nav_cam_inv = None
+
+    T_gt = None
+    if not use_realsense_bag and 'extr_data' in locals() and "transforms" in extr_data:
+        if "T_gt" in extr_data["transforms"]:
+            T_gt = np.array(extr_data["transforms"]["T_gt"])
+
+    target_gt_bag_path = gt_bag_path if gt_bag_path else bag_path
+    inline_gt_parsing = False
+
+    if target_gt_bag_path and (gt_topic or gt_bag_path) and verbose:
+        if target_gt_bag_path == bag_path and gt_topic:
+            inline_gt_parsing = True
+            print("[INFO] Will parse Ground Truth from the main bag on the fly.")
+        else:
+            print("[INFO] Parsing Ground Truth trajectory from separate bag...")
+            gt_data = load_gt_trajectory(target_gt_bag_path, gt_topic, gt_frame_id, gt_child_frame_id)
+            if gt_data:
+                gt_pts = np.array([p for _, p in gt_data])
+                if T_gt is not None and T_gt.shape == (4, 4):
+                    print("[INFO] Applying T_gt transform to GT points.")
+                    hom_pts = np.hstack((gt_pts, np.ones((gt_pts.shape[0], 1))))
+                    gt_pts = (T_gt @ hom_pts.T).T[:, :3]
+                gt_pts -= gt_pts[0]
+                rr.log('world/cuvslam/trajectory_gt', rr.LineStrips3D([gt_pts.tolist()], colors=[[0, 200, 0]]), static=True)
 
     # --------------------------------------------------------------------------
     # Playback: Case 1 - RealSense Bag
@@ -978,63 +1143,146 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
                 print("[ERROR] Left or Right image topics not found in bag file connections!")
                 sys.exit(1)
 
+            gt_cids = set()
+            if inline_gt_parsing:
+                gt_cids = {cid for cid, t in conns.items() if t == gt_topic}
+
             print("[INFO] Starting ROS 1 Bag Stereo processing...")
-            for sync_ts, left_img, right_img in iter_bag_stereo_ros1(bag_path, left_cids, right_cids):
-                images = [left_img, right_img]
-                odom_pose_estimate, slam_pose = tracker.track(sync_ts, images=images)
+            for res in iter_bag_stereo_ros1(bag_path, left_cids, right_cids, gt_cids, gt_frame_id, gt_child_frame_id):
+                if res[0] == 'stereo':
+                    sync_ts, left_img, right_img = res[1], res[2], res[3]
+                    images = [left_img, right_img]
+                    odom_pose_estimate, slam_pose = tracker.track(sync_ts, images=images)
 
-                process_tracking_results(
-                    frame_id=frame_id,
-                    timestamp=sync_ts,
-                    images=images,
-                    odom_pose_estimate=odom_pose_estimate,
-                    slam_pose=slam_pose,
-                    tracker=tracker,
-                    verbose=verbose,
-                    trajectory_odom=trajectory_odom,
-                    trajectory_slam=trajectory_slam,
-                    last_valid_odom_pose=last_valid_odom_pose,
-                    last_valid_slam_translation=last_valid_slam_translation,
-                    is_tracking_lost=is_tracking_lost,
-                    offset_T=offset_T,
-                    last_valid_world_T=last_valid_world_T,
-                    T_xsens_gray0=T_xsens_gray0,
-                    T_gray0_xsens=T_gray0_xsens,
-                    mode_mono=False
-                )
+                    process_tracking_results(
+                        frame_id=frame_id,
+                        timestamp=sync_ts,
+                        images=images,
+                        odom_pose_estimate=odom_pose_estimate,
+                        slam_pose=slam_pose,
+                        tracker=tracker,
+                        verbose=verbose,
+                        trajectory_odom=trajectory_odom,
+                        trajectory_slam=trajectory_slam,
+                        last_valid_odom_pose=last_valid_odom_pose,
+                        last_valid_slam_translation=last_valid_slam_translation,
+                        is_tracking_lost=is_tracking_lost,
+                        offset_T=offset_T,
+                        last_valid_world_T=last_valid_world_T,
+                        T_xsens_gray0=T_xsens_gray0,
+                        T_gray0_xsens=T_gray0_xsens,
+                        mode_mono=False
+                    )
 
-                frame_id += 1
-                if frame_id % 50 == 0:
-                    print(f"[INFO] Processed: {frame_id} frames")
+                    frame_id += 1
+                    if frame_id % 50 == 0:
+                        print(f"[INFO] Processed: {frame_id} frames")
+                elif res[0] == 'gt':
+                    ts_ns, pos, quat = res[1], res[2], res[3]
+                    pos = np.array(pos)
+
+                    if T_gt is not None and T_gt.shape == (4, 4):
+                        T_nav_imu = np.eye(4)
+                        if quat is not None:
+                            T_nav_imu[:3, :3] = R.from_quat(quat).as_matrix()
+                        T_nav_imu[:3, 3] = pos
+
+                        T_nav_cam = T_nav_imu @ T_gt
+                        pos_cam = T_nav_cam[:3, 3]
+                        R_nav_cam = T_nav_cam[:3, :3]
+
+                        if first_gt_point is None:
+                            first_gt_point = pos_cam.copy()
+                            first_T_nav_cam_inv = np.linalg.inv(R_nav_cam)
+
+                        delta_pos = pos_cam - first_gt_point
+                        final_pos = first_T_nav_cam_inv @ delta_pos
+                    else:
+                        if first_gt_point is None:
+                            first_gt_point = pos.copy()
+                            if quat is not None:
+                                first_T_nav_cam_inv = np.linalg.inv(R.from_quat(quat).as_matrix())
+
+                        delta_pos = pos - first_gt_point
+                        if first_T_nav_cam_inv is not None:
+                            final_pos = first_T_nav_cam_inv @ delta_pos
+                        else:
+                            final_pos = delta_pos
+
+                    trajectory_gt_pts.append(final_pos.tolist())
+                    if len(trajectory_gt_pts) % 10 == 0:
+                        rr.log('world/cuvslam/trajectory_gt', rr.LineStrips3D([trajectory_gt_pts], colors=[[0, 200, 0]]))
         else:
             # Monocular ROS 1 reading
             print("[INFO] Starting ROS 1 Bag Monocular processing...")
-            for ts_ns, img in iter_bag_mono(bag_path, left_cids):
-                images = [img]
-                odom_pose_estimate, slam_pose = tracker.track(ts_ns, images=images)
+            gt_cids = set()
+            if inline_gt_parsing:
+                gt_cids = {cid for cid, t in conns.items() if t == gt_topic}
 
-                process_tracking_results(
-                    frame_id=frame_id,
-                    timestamp=ts_ns,
-                    images=images,
-                    odom_pose_estimate=odom_pose_estimate,
-                    slam_pose=slam_pose,
-                    tracker=tracker,
-                    verbose=verbose,
-                    trajectory_odom=trajectory_odom,
-                    trajectory_slam=trajectory_slam,
-                    last_valid_odom_pose=last_valid_odom_pose,
-                    last_valid_slam_translation=last_valid_slam_translation,
-                    is_tracking_lost=is_tracking_lost,
-                    offset_T=offset_T,
-                    last_valid_world_T=last_valid_world_T,
-                    T_xsens_gray0=T_xsens_gray0,
-                    T_gray0_xsens=T_gray0_xsens,
-                    mode_mono=True
-                )
-                frame_id += 1
-                if frame_id % 50 == 0:
-                    print(f"[INFO] Processed: {frame_id} frames")
+            for res in iter_bag_mono(bag_path, left_cids, gt_cids, gt_frame_id, gt_child_frame_id):
+                if res[0] == 'mono':
+                    sync_ts, img = res[1], res[2]
+                    images = [img]
+                    odom_pose_estimate, slam_pose = tracker.track(sync_ts, images=images)
+
+                    process_tracking_results(
+                        frame_id=frame_id,
+                        timestamp=sync_ts,
+                        images=images,
+                        odom_pose_estimate=odom_pose_estimate,
+                        slam_pose=slam_pose,
+                        tracker=tracker,
+                        verbose=verbose,
+                        trajectory_odom=trajectory_odom,
+                        trajectory_slam=trajectory_slam,
+                        last_valid_odom_pose=last_valid_odom_pose,
+                        last_valid_slam_translation=last_valid_slam_translation,
+                        is_tracking_lost=is_tracking_lost,
+                        offset_T=offset_T,
+                        last_valid_world_T=last_valid_world_T,
+                        T_xsens_gray0=T_xsens_gray0,
+                        T_gray0_xsens=T_gray0_xsens,
+                        mode_mono=True
+                    )
+
+                    frame_id += 1
+                    if frame_id % 50 == 0:
+                        print(f"[INFO] Processed: {frame_id} frames")
+                elif res[0] == 'gt':
+                    ts_ns, pos, quat = res[1], res[2], res[3]
+                    pos = np.array(pos)
+
+                    if T_gt is not None and T_gt.shape == (4, 4):
+                        T_nav_imu = np.eye(4)
+                        if quat is not None:
+                            T_nav_imu[:3, :3] = R.from_quat(quat).as_matrix()
+                        T_nav_imu[:3, 3] = pos
+
+                        T_nav_cam = T_nav_imu @ T_gt
+                        pos_cam = T_nav_cam[:3, 3]
+                        R_nav_cam = T_nav_cam[:3, :3]
+
+                        if first_gt_point is None:
+                            first_gt_point = pos_cam.copy()
+                            first_T_nav_cam_inv = np.linalg.inv(R_nav_cam)
+
+                        delta_pos = pos_cam - first_gt_point
+                        final_pos = first_T_nav_cam_inv @ delta_pos
+                    else:
+                        if first_gt_point is None:
+                            first_gt_point = pos.copy()
+                            if quat is not None:
+                                first_T_nav_cam_inv = np.linalg.inv(R.from_quat(quat).as_matrix())
+
+                        delta_pos = pos - first_gt_point
+                        if first_T_nav_cam_inv is not None:
+                            final_pos = first_T_nav_cam_inv @ delta_pos
+                        else:
+                            final_pos = delta_pos
+
+                    trajectory_gt_pts.append(final_pos.tolist())
+                    if len(trajectory_gt_pts) % 10 == 0:
+                        rr.log('world/cuvslam/trajectory_gt', rr.LineStrips3D([trajectory_gt_pts], colors=[[0, 200, 0]]))
 
         print("[INFO] ROS 1 Bag processing finished.")
 
@@ -1125,38 +1373,40 @@ def process_tracking_results(
             rr.set_time_sequence('frame', frame_id)
             # Log left camera image
             # Make sure to compress for performance
-            rr.log('world/camera/left', rr.Image(images[0]).compress(jpeg_quality=80))
+            rr.log('world/cuvslam/camera/left', rr.Image(images[0]).compress(jpeg_quality=80))
             if not mode_mono and len(images) > 1:
-                rr.log('world/camera/right', rr.Image(images[1]).compress(jpeg_quality=80))
+                rr.log('world/cuvslam/camera/right', rr.Image(images[1]).compress(jpeg_quality=80))
 
-            rr.log('trajectory_odom', rr.LineStrips3D([trajectory_odom]))
+            rr.log('world/cuvslam/trajectory_odom', rr.LineStrips3D([trajectory_odom]))
             if trajectory_slam:
-                rr.log('trajectory_slam', rr.LineStrips3D([trajectory_slam]))
+                rr.log('world/cuvslam/trajectory_slam', rr.LineStrips3D([trajectory_slam]))
 
             # Log current Pose transformation
             rr.log(
-                "world/camera/rig",
+                "world/cuvslam/camera/rig",
                 rr.Transform3D(
                     translation=active_odom_pose.translation,
                     quaternion=active_odom_pose.rotation
                 ),
                 rr.Arrows3D(
                     vectors=np.eye(3) * 0.2,
-                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+                    origins=np.zeros((3, 3)),
+                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+                    radii=0.01,
                 )
             )
 
             # Log Keypoint Points
             if obs_uv_left:
-                rr.log('world/camera/left/observations', rr.Points2D(obs_uv_left, radii=5, colors=obs_colors_left))
+                rr.log('world/cuvslam/camera/left/observations', rr.Points2D(obs_uv_left, radii=5, colors=obs_colors_left))
             else:
-                rr.log('world/camera/left/observations', rr.Clear(recursive=False))
+                rr.log('world/cuvslam/camera/left/observations', rr.Clear(recursive=False))
 
             if not mode_mono and len(images) > 1:
                 if obs_uv_right:
-                    rr.log('world/camera/right/observations', rr.Points2D(obs_uv_right, radii=5, colors=obs_colors_right))
+                    rr.log('world/cuvslam/camera/right/observations', rr.Points2D(obs_uv_right, radii=5, colors=obs_colors_right))
                 else:
-                    rr.log('world/camera/right/observations', rr.Clear(recursive=False))
+                    rr.log('world/cuvslam/camera/right/observations', rr.Clear(recursive=False))
 
 
 if __name__ == '__main__':

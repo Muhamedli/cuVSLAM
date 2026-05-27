@@ -1,23 +1,33 @@
-# ==============================================================================
-# MAIN CONFIGURATION FOR cuVSLAM RUNNER
-# ==============================================================================
+# ====================================================
+# main configuration for cuVSLAM runner
+# ====================================================
 
-# Mode of operation: mono, stereo, inertial, rgbd, etc.
-mode: "stereo"
+mode: "stereo"  # Mode: mono, stereo, inertial, rgbd
+use_slam: true  # on/off SLAM mode
+verbose: true   # on/off Rerun
 
-# Enabled/disabled SLAM mode
-use_slam: true
+# Odometry settings
+use_denoising: true
+use_motion_model: true
+max_frame_delta_s: 0.5
 
-# Enable/disable Rerun visualization
-verbose: true
+# SLAM settings
+max_map_size: 0
+map_cell_size: 0.1
+max_landmarks_distance: 10.0
+planar_constraints: false
 
-# ------------------------------------------------------------------------------
-# Active Bag Path and Topic Configuration
-# ------------------------------------------------------------------------------
-bag_path: "/mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/Botanic_garden/1018_00_VLIO.bag"
-gt_bag_path: /mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/Botanic_garden/gt_1018_00_qnew.bag
+# ====================================================
+# bag path and topic configuration
+# ====================================================
+
+bag_path: "/mnt/foundation_ssd/foundation_data/recorded_data/bags/VSLAM/MADMAX/A1_20181202-153722.bag"
+gt_bag_path:
 use_realsense_bag: false
 
 topics:
-  left: /dalsa_gray/left/image_raw
-  right: /dalsa_gray/right/image_raw
+  left: /hcru2/pt_stereo_rect/left/image
+  right: /hcru2/pt_stereo_rect/right/image
+  gt: /tf
+  gt_frame_id: nav_current_submap
+  gt_child_frame_id: imu
