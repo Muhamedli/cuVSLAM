@@ -10,12 +10,18 @@ verbose: true   # on/off Rerun
 use_denoising: true
 use_motion_model: true
 max_frame_delta_s: 0.5
+rectified_stereo_camera: false
+multicam_mode: "precision"     # precision, moderate, performance
+async_sba: true
+debug_imu_mode: false
 
 # SLAM settings
 max_map_size: 0
 map_cell_size: 0.1
 max_landmarks_distance: 10.0
 planar_constraints: false
+sync_mode: false
+throttling_time_ms: 0
 
 # ====================================================
 # bag path and topic configuration

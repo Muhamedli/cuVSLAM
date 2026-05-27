@@ -11,6 +11,10 @@ cam_0:
   cy: 385.718642
   distortion_model: "pinhole"
   distortion_coefficients: [-0.185152, 0.219182, 0.0, 0.0, 0.0]
+  border_top: 0
+  border_bottom: 0
+  border_left: 0
+  border_right: 0
 
 cam_1:
   width: 1032
@@ -21,3 +25,7 @@ cam_1:
   cy: 384.232118
   distortion_model: "pinhole"
   distortion_coefficients: [-0.187918, 0.222345, 0.0, 0.0, 0.0]
+  border_top: 0
+  border_bottom: 0
+  border_left: 0
+  border_right: 0

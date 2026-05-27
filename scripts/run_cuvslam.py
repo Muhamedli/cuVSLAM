@@ -716,6 +716,16 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
                 print(f"[WARN] Unknown distortion model {dist_model}, defaulting to Pinhole.")
                 cam.distortion = cuvslam.Distortion(cuvslam.Distortion.Model.Pinhole)
 
+            # Set camera border cropping/masking if present
+            if "border_top" in cfg:
+                cam.border_top = int(cfg["border_top"])
+            if "border_bottom" in cfg:
+                cam.border_bottom = int(cfg["border_bottom"])
+            if "border_left" in cfg:
+                cam.border_left = int(cfg["border_left"])
+            if "border_right" in cfg:
+                cam.border_right = int(cfg["border_right"])
+
             # Retrieve transform from extrinsics
             ext_key = f"rig_from_cam_{idx}"
             transforms = extrinsics_yaml.get("transforms", {})
@@ -776,8 +786,12 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
     # Initialize cuVSLAM configurations
     odom_hp = main_params
 
+    async_sba_val = (odom_mode == cuvslam.Tracker.OdometryMode.Multicamera and use_realsense_bag)
+    if "async_sba" in odom_hp:
+        async_sba_val = bool(odom_hp["async_sba"])
+
     odom_cfg = cuvslam.Tracker.OdometryConfig(
-        async_sba=(odom_mode == cuvslam.Tracker.OdometryMode.Multicamera and use_realsense_bag),
+        async_sba=async_sba_val,
         enable_observations_export=True,
         enable_final_landmarks_export=True,
         odometry_mode=odom_mode
@@ -789,13 +803,35 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
         odom_cfg.use_motion_model = odom_hp["use_motion_model"]
     if "max_frame_delta_s" in odom_hp:
         odom_cfg.max_frame_delta_s = odom_hp["max_frame_delta_s"]
+    if "rectified_stereo_camera" in odom_hp:
+        odom_cfg.rectified_stereo_camera = bool(odom_hp["rectified_stereo_camera"])
+    if "debug_dump_directory" in odom_hp:
+        odom_cfg.debug_dump_directory = str(odom_hp["debug_dump_directory"])
+    if "debug_imu_mode" in odom_hp:
+        odom_cfg.debug_imu_mode = bool(odom_hp["debug_imu_mode"])
+    if "multicam_mode" in odom_hp:
+        mode_str = str(odom_hp["multicam_mode"]).lower()
+        if mode_str == "precision":
+            odom_cfg.multicam_mode = cuvslam.Tracker.MulticameraMode.Precision
+        elif mode_str == "moderate":
+            odom_cfg.multicam_mode = cuvslam.Tracker.MulticameraMode.Moderate
+        elif mode_str == "performance":
+            odom_cfg.multicam_mode = cuvslam.Tracker.MulticameraMode.Performance
 
     slam_cfg = None
     if use_slam:
         slam_hp = main_params
+        sync_mode_val = use_realsense_bag
+        if "sync_mode" in slam_hp:
+            sync_mode_val = bool(slam_hp["sync_mode"])
+
+        enable_reading_internals_val = use_realsense_bag
+        if "enable_reading_internals" in slam_hp:
+            enable_reading_internals_val = bool(slam_hp["enable_reading_internals"])
+
         slam_cfg = cuvslam.Tracker.SlamConfig(
-            sync_mode=use_realsense_bag, # Sync mode for realsense, async for ROS bags
-            enable_reading_internals=use_realsense_bag,
+            sync_mode=sync_mode_val,
+            enable_reading_internals=enable_reading_internals_val,
             max_map_size=slam_hp.get("max_map_size", 0)
         )
         if "use_gpu" in slam_hp:
@@ -806,6 +842,12 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
             slam_cfg.max_landmarks_distance = slam_hp["max_landmarks_distance"]
         if "planar_constraints" in slam_hp:
             slam_cfg.planar_constraints = slam_hp["planar_constraints"]
+        if "throttling_time_ms" in slam_hp:
+            slam_cfg.throttling_time_ms = int(slam_hp["throttling_time_ms"])
+        if "map_cache_path" in slam_hp:
+            slam_cfg.map_cache_path = str(slam_hp["map_cache_path"])
+        if "gt_align_mode" in slam_hp:
+            slam_cfg.gt_align_mode = bool(slam_hp["gt_align_mode"])
 
     # Create VSLAM Tracker
     tracker = cuvslam.Tracker(rig, odom_cfg, slam_cfg)
