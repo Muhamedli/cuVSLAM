@@ -9,3 +9,4 @@ build
 __pycache__
 *.egg-info
 dataset
+*.whl
