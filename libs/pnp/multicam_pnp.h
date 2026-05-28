@@ -27,8 +27,10 @@
 
 namespace cuvslam::pnp {
 
+extern int g_pnp_max_iterations;
+
 struct PNPSettings {
-  PNPSettings() = default;
+  PNPSettings() { max_iteration = g_pnp_max_iterations; }
 
   static PNPSettings LCSettings();
   static PNPSettings SLAMRansacSettings();

@@ -438,6 +438,18 @@ public:
     bool debug_imu_mode = false;
     /// RGBD odometry settings.
     RGBDSettings rgbd_settings;
+    /// Number of tracks for feature selection. Default: 450
+    int32_t num_desired_tracks = 450;
+    /// Enable RANSAC filtering in feature selection. Default: false
+    bool ransac_filter = false;
+    /// Number of keyframes in local SBA window. Default: 7
+    int32_t num_sba_frames = 7;
+    /// Number of fixed keyframes in local SBA window. Default: 3
+    int32_t num_fixed_sba_frames = 3;
+    /// Number of SBA iterations. Default: 7
+    int32_t num_sba_iterations = 7;
+    /// Maximum number of iterations for PnP solver. Default: 13
+    int32_t pnp_max_iterations = 13;
   };
 
   // TODO(vikuznetsov): remove when https://gcc.gnu.org/bugzilla/show_bug.cgi?id=88165 is fixed

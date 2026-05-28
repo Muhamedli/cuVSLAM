@@ -530,6 +530,12 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
         parser = argparse.ArgumentParser(description="Unified cuVSLAM Runner")
         parser.add_argument("--config-dir", type=str, default=None, help="Path to config directory (defaults to ../config)")
         parser.add_argument("--verbose", type=int, default=None, help="Override visualization verbose setting (0/1)")
+        parser.add_argument("--num-desired-tracks", type=int, default=None, help="Number of desired active tracks in SOF")
+        parser.add_argument("--ransac-filter", type=int, default=None, help="Enable/disable RANSAC filter for 2D tracks (0/1)")
+        parser.add_argument("--num-sba-frames", type=int, default=None, help="Number of keyframes in local SBA window")
+        parser.add_argument("--num-fixed-sba-frames", type=int, default=None, help="Number of fixed keyframes in local SBA window")
+        parser.add_argument("--num-sba-iterations", type=int, default=None, help="Number of SBA iterations")
+        parser.add_argument("--pnp-max-iterations", type=int, default=None, help="Maximum number of iterations for PnP solver")
         args, _ = parser.parse_known_args()
 
         # Determine paths
@@ -553,6 +559,21 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
 
     if params_override:
         main_params.update(params_override)
+
+    # Load command line arguments overrides if present
+    if config_dir is not None and 'args' in locals():
+        if args.num_desired_tracks is not None:
+            main_params["num_desired_tracks"] = args.num_desired_tracks
+        if args.ransac_filter is not None:
+            main_params["ransac_filter"] = bool(args.ransac_filter)
+        if args.num_sba_frames is not None:
+            main_params["num_sba_frames"] = args.num_sba_frames
+        if args.num_fixed_sba_frames is not None:
+            main_params["num_fixed_sba_frames"] = args.num_fixed_sba_frames
+        if args.num_sba_iterations is not None:
+            main_params["num_sba_iterations"] = args.num_sba_iterations
+        if args.pnp_max_iterations is not None:
+            main_params["pnp_max_iterations"] = args.pnp_max_iterations
 
     # Resolve verbose setting
     verbose = bool(main_params.get("verbose", True))
@@ -817,6 +838,27 @@ def main(config_dir=None, verbose_override=None, params_override=None, intrinsic
             odom_cfg.multicam_mode = cuvslam.Tracker.MulticameraMode.Moderate
         elif mode_str == "performance":
             odom_cfg.multicam_mode = cuvslam.Tracker.MulticameraMode.Performance
+
+    if "num_desired_tracks" in odom_hp:
+        odom_cfg.num_desired_tracks = int(odom_hp["num_desired_tracks"])
+    if "ransac_filter" in odom_hp:
+        odom_cfg.ransac_filter = bool(odom_hp["ransac_filter"])
+    if "num_sba_frames" in odom_hp:
+        odom_cfg.num_sba_frames = int(odom_hp["num_sba_frames"])
+    if "num_fixed_sba_frames" in odom_hp:
+        odom_cfg.num_fixed_sba_frames = int(odom_hp["num_fixed_sba_frames"])
+    if "num_sba_iterations" in odom_hp:
+        odom_cfg.num_sba_iterations = int(odom_hp["num_sba_iterations"])
+    if "pnp_max_iterations" in odom_hp:
+        odom_cfg.pnp_max_iterations = int(odom_hp["pnp_max_iterations"])
+
+    print(f"[INFO] cuVSLAM tracker parameters:")
+    print(f"  num_desired_tracks: {odom_cfg.num_desired_tracks}")
+    print(f"  ransac_filter: {odom_cfg.ransac_filter}")
+    print(f"  num_sba_frames: {odom_cfg.num_sba_frames}")
+    print(f"  num_fixed_sba_frames: {odom_cfg.num_fixed_sba_frames}")
+    print(f"  num_sba_iterations: {odom_cfg.num_sba_iterations}")
+    print(f"  pnp_max_iterations: {odom_cfg.pnp_max_iterations}")
 
     slam_cfg = None
     if use_slam:

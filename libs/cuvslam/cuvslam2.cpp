@@ -39,6 +39,10 @@
 
 namespace cuvslam {
 
+namespace pnp {
+extern int g_pnp_max_iterations;
+}
+
 namespace {
 
 // Convert translation vector from cuVSLAM to OpenCV coordinate system
@@ -361,8 +365,16 @@ Odometry::Odometry(const Rig& rig, const Config& cfg) {
                        "IMU fusion is enabled, but IMU calibration is not provided");
   THROW_INVALID_ARG_IF(rig.imus.size() > 1, "Only one IMU sensor is supported");
 
+  pnp::g_pnp_max_iterations = cfg.pnp_max_iterations;
+
   odom::Settings svo_settings;
   svo_settings.verbose = Trace::GetVerbosity() > Trace::Verbosity::None;
+
+  svo_settings.sof_settings.num_desired_tracks = cfg.num_desired_tracks;
+  svo_settings.sof_settings.ransac_filter = cfg.ransac_filter;
+  svo_settings.sba_settings.num_sba_frames = cfg.num_sba_frames;
+  svo_settings.sba_settings.num_fixed_sba_frames = cfg.num_fixed_sba_frames;
+  svo_settings.sba_settings.num_sba_iterations = cfg.num_sba_iterations;
 
   svo_settings.sba_settings.async = cfg.async_sba;
   svo_settings.sba_settings.mode =

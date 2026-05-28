@@ -431,7 +431,8 @@ NB_MODULE(pycuvslam, m) {
   nb::class_<Odometry::Config>(odom_cls, "Config")
       // WARNING: the order of init arguments in this definition must coincide with the order in the structure
       .def(nb::init<Odometry::MulticameraMode, Odometry::OdometryMode, bool, bool, bool, bool, bool, bool, bool, bool,
-                    float, std::string_view, bool, const Odometry::RGBDSettings&>(),
+                    float, std::string_view, bool, const Odometry::RGBDSettings&, int32_t, bool, int32_t, int32_t,
+                    int32_t, int32_t>(),
            nb::kw_only(), nb::arg("multicam_mode") = Odometry::Config{}.multicam_mode,
            nb::arg("odometry_mode") = Odometry::Config{}.odometry_mode, nb::arg("use_gpu") = Odometry::Config{}.use_gpu,
            nb::arg("async_sba") = Odometry::Config{}.async_sba,
@@ -444,7 +445,13 @@ NB_MODULE(pycuvslam, m) {
            nb::arg("max_frame_delta_s") = Odometry::Config{}.max_frame_delta_s,
            nb::arg("debug_dump_directory") = Odometry::Config{}.debug_dump_directory,
            nb::arg("debug_imu_mode") = Odometry::Config{}.debug_imu_mode,
-           nb::arg("rgbd_settings") = Odometry::Config{}.rgbd_settings)
+           nb::arg("rgbd_settings") = Odometry::Config{}.rgbd_settings,
+           nb::arg("num_desired_tracks") = Odometry::Config{}.num_desired_tracks,
+           nb::arg("ransac_filter") = Odometry::Config{}.ransac_filter,
+           nb::arg("num_sba_frames") = Odometry::Config{}.num_sba_frames,
+           nb::arg("num_fixed_sba_frames") = Odometry::Config{}.num_fixed_sba_frames,
+           nb::arg("num_sba_iterations") = Odometry::Config{}.num_sba_iterations,
+           nb::arg("pnp_max_iterations") = Odometry::Config{}.pnp_max_iterations)
       .def_rw("multicam_mode", &Odometry::Config::multicam_mode, "See :class:`Odometry.MulticameraMode`")
       .def_rw("odometry_mode", &Odometry::Config::odometry_mode, "See :class:`Odometry.OdometryMode`")
       .def_rw("use_gpu", &Odometry::Config::use_gpu, "Enable to use GPU acceleration")
@@ -465,7 +472,14 @@ NB_MODULE(pycuvslam, m) {
               "Directory for debug data dumps. If empty, no debug data will be dumped")
       .def_rw("debug_imu_mode", &Odometry::Config::debug_imu_mode, "Enable IMU debug mode")
       .def_rw("rgbd_settings", &Odometry::Config::rgbd_settings,
-              "Settings for RGB-D odometry mode. See :class:`Odometry.RGBDSettings`");
+              "Settings for RGB-D odometry mode. See :class:`Odometry.RGBDSettings`")
+      .def_rw("num_desired_tracks", &Odometry::Config::num_desired_tracks, "Number of features to track")
+      .def_rw("ransac_filter", &Odometry::Config::ransac_filter, "Enable RANSAC filter for 2D tracks")
+      .def_rw("num_sba_frames", &Odometry::Config::num_sba_frames, "Number of keyframes in local SBA window")
+      .def_rw("num_fixed_sba_frames", &Odometry::Config::num_fixed_sba_frames,
+              "Number of fixed keyframes in local SBA window")
+      .def_rw("num_sba_iterations", &Odometry::Config::num_sba_iterations, "Number of SBA iterations")
+      .def_rw("pnp_max_iterations", &Odometry::Config::pnp_max_iterations, "Maximum iterations of PnP solver");
 
   // Odometry::State binding
   nb::class_<Odometry::State>(odom_cls, "State",

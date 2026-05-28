@@ -26,6 +26,8 @@
 
 namespace cuvslam::pnp {
 
+int g_pnp_max_iterations = 13;
+
 using Mat36 = Eigen::Matrix<float, 3, 6>;
 using Mat23 = Eigen::Matrix<float, 2, 3>;
 using Mat26 = Eigen::Matrix<float, 2, 6>;
